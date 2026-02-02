@@ -1,0 +1,14 @@
+.DS_Store
+.env
+*/.env
+**/*/.env
+.venv
+scripts/.venv
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
