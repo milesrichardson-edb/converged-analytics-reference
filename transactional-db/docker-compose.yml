@@ -1,0 +1,48 @@
+services:
+  pgd:
+    build:
+      context: .
+      args:
+        EDB_SUBSCRIPTION_TOKEN: ${EDB_SUBSCRIPTION_TOKEN}
+        PLATFORM: linux/amd64
+    container_name: pgd
+    environment:
+      POSTGRES_PASSWORD: secret
+      PGDATA: /var/lib/postgresql/db
+      CONFIG_FILE: /config/demo-config.toml
+      # Remove AWS credentials - let PGAA get them from Lakekeeper catalog
+      # AWS_ACCESS_KEY_ID: minioadmin
+      # AWS_SECRET_ACCESS_KEY: minioadmin
+      # AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+      # Point metadata endpoint to localhost to prevent lookups
+      # AWS_EC2_METADATA_SERVICE_ENDPOINT: "http://127.0.0.1:1"
+      # AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE: "IPv4"
+    volumes:
+      - pgd-data:/var/lib/postgresql/db
+      - pgd-analytics:/var/lib/postgresql/pgd-analytics
+      # Remote Docker context: config file must be on remote host
+      # Copy to remote: scp demo-config.toml $REMOTE_DOCKER_HOST:/home/ec2-user/converged-analytics-reference/
+      - /home/ec2-user/converged-analytics-reference/demo-config.toml:/config/demo-config.toml:ro
+      # Local Docker context: uncomment the line below and comment out the line above
+      # - ../demo-config.toml:/config/demo-config.toml:ro
+    ports:
+      - "7432:5432"
+      - "6432:6432"
+      - "6433:6433"
+    networks:
+      - converged-analytics-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d demo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgd-data:
+  pgd-analytics:
+
+networks:
+  converged-analytics-network:
+    external: true
+    name: converged-analytics-network

@@ -1,0 +1,166 @@
+services:
+  # MinIO - S3-compatible object storage
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - converged-analytics-network
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Create MinIO buckets
+  createbuckets:
+    image: minio/mc:latest
+    container_name: minio-createbuckets
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - converged-analytics-network
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        echo "MinIO is ready, creating bucket..."
+        mc mb local/warehouse --ignore-existing
+        echo "Bucket created successfully"
+        exit 0
+
+  # PostgreSQL database for Lakekeeper metadata
+  lakekeeper-postgres:
+    image: postgres:17.4
+    container_name: lakekeeper-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: lakekeeper
+    ports:
+      - "9054:5432"
+    volumes:
+      - lakekeeper-db-data:/var/lib/postgresql/data
+    networks:
+      - converged-analytics-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+    command:
+      - "postgres"
+      - "-c"
+      - "log_min_duration_statement=500"
+
+  # Lakekeeper database migration
+  lakekeeper-migrate:
+    image: quay.io/lakekeeper/catalog:v0.10.3
+    container_name: lakekeeper-migrate
+    environment:
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgres://postgres:password@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://postgres:password@lakekeeper-postgres:5432/lakekeeper
+    restart: "no"
+    command: ["migrate"]
+    networks:
+      - converged-analytics-network
+    depends_on:
+      lakekeeper-postgres:
+        condition: service_healthy
+
+  # Lakekeeper - Iceberg REST Catalog
+  lakekeeper:
+    image: quay.io/lakekeeper/catalog:v0.10.3
+    container_name: lakekeeper
+    environment:
+      LAKEKEEPER__BASE_URI: http://lakekeeper:8181
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgres://postgres:password@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgres://postgres:password@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+    command: ["serve"]
+    ports:
+      - "8181:8181"
+    networks:
+      - converged-analytics-network
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+      createbuckets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 1s
+      timeout: 10s
+      retries: 3
+      start_period: 3s
+
+  # Accept Lakekeeper EULA
+  lakekeeper-bootstrap:
+    image: curlimages/curl
+    container_name: lakekeeper-bootstrap
+    restart: "no"
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+    networks:
+      - converged-analytics-network
+    command:
+      - -w
+      - "%{http_code}"
+      - "-X"
+      - "POST"
+      - "-v"
+      - "http://lakekeeper:8181/management/v1/bootstrap"
+      - "-H"
+      - "Content-Type: application/json"
+      - "--data"
+      - '{"accept-terms-of-use": true}'
+      - "-o"
+      - "/dev/null"
+
+  # Create initial warehouse (demo-warehouse)
+  initialwarehouse:
+    image: curlimages/curl
+    container_name: lakekeeper-initialwarehouse
+    restart: "no"
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
+      lakekeeper-bootstrap:
+        condition: service_completed_successfully
+    networks:
+      - converged-analytics-network
+    command:
+      - -w
+      - "%{http_code}"
+      - "-X"
+      - "POST"
+      - "-v"
+      - "http://lakekeeper:8181/management/v1/warehouse"
+      - "-H"
+      - "Content-Type: application/json"
+      - "--data"
+      - '{"warehouse-name": "demo-warehouse", "project-id": "00000000-0000-0000-0000-000000000000", "storage-profile": {"type": "s3", "bucket": "warehouse", "endpoint": "http://minio:9000", "region": "us-east-1", "path-style-access": true, "sts-enabled": true, "flavor": "minio"}, "storage-credential": {"type": "s3", "credential-type": "access-key", "aws-access-key-id": "minioadmin", "aws-secret-access-key": "minioadmin"}}'
+      - "-o"
+      - "/dev/null"
+
+volumes:
+  minio-data:
+  lakekeeper-db-data:
+
+networks:
+  converged-analytics-network:
+    driver: bridge
+    name: converged-analytics-network

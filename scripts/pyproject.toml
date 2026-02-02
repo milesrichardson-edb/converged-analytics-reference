@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "converged-analytics-demo"
+version = "0.1.0"
+description = "Helper scripts for converged analytics demo"
+requires-python = ">=3.10"
+dependencies = [
+    "tomli>=2.0.1",
+    "psycopg2-binary>=2.9.9",
+    "faker>=22.0.0",
+    "click>=8.1.7",
+    "rich>=13.7.0",
+    "requests>=2.31.0",
+]
+
+[tool.setuptools]
+py-modules = ["config_validator", "generate_data", "query_examples"]
+
+[tool.uv]
+dev-dependencies = [
+    "mypy>=1.8.0",
+    "black>=24.1.0",
+    "pytest>=7.4.4",
+    "types-psycopg2>=2.9.21",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+strict = true

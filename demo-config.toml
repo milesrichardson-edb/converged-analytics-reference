@@ -1,0 +1,126 @@
+# Converged Analytics Demo Configuration
+# This file configures all components of the demo stack
+
+[catalog]
+# The name used to reference this catalog in PGAA
+name = "demo_catalog"
+
+# Catalog type: "iceberg-rest" for Lakekeeper or other REST catalogs
+type = "iceberg-rest"
+
+# REST Catalog endpoint URL
+# Default: local Lakekeeper instance (note: use /catalog prefix for Lakekeeper)
+url = "http://lakekeeper:8181/catalog"
+
+# Warehouse identifier (for Lakekeeper, typically a UUID)
+# This will be created automatically by the catalog component
+warehouse = "demo-warehouse"
+
+# Warehouse name (human-readable)
+warehouse_name = "demo-warehouse"
+
+# Authentication token for the catalog (if required)
+# For local Lakekeeper, this can be empty or a placeholder
+token = ""
+
+# For development/testing: accept self-signed certificates
+danger_accept_invalid_certs = "false"
+
+[object_store]
+# S3-compatible object store type: "minio" or "s3"
+type = "minio"
+
+# Endpoint URL for S3-compatible storage
+# Default: local MinIO instance
+endpoint = "http://minio:9000"
+
+# S3 bucket name for Iceberg data files
+bucket = "warehouse"
+
+# Access credentials
+access_key = "minioadmin"
+secret_key = "minioadmin"
+
+# Region (required for some S3 clients)
+region = "us-east-1"
+
+# Path style access (true for MinIO, false for AWS S3)
+path_style_access = true
+
+[spark]
+# Enable RAPIDS Accelerator for Apache Spark (requires GPU)
+enable_rapids = false
+
+# Spark Connect endpoint URL (accessible from PGD and WHPG)
+# Default: local Spark Connect cluster
+# Note: When accessing from containers, use the service name or bridge IP
+connect_url = "sc://spark-master:15002"
+
+# Spark version
+version = "3.5.6"
+
+# Scala version
+scala_version = "2.12"
+
+# Iceberg version
+iceberg_version = "1.6.1"
+
+# RAPIDS version (when enabled)
+rapids_version = "25.10.0"
+
+[network]
+# Docker network name for inter-component communication
+# All components will join this network
+name = "converged-analytics-network"
+
+# Bridge IP for accessing host services from containers
+# Used when WHPG needs to reach Spark Connect on the host
+bridge_ip = "172.17.0.1"
+
+[database.transactional]
+# PGD node group name
+node_group = "pgd-group"
+
+# Database connection settings
+host = "pgd"
+port = 5432
+database = "demo"
+user = "postgres"
+password = "secret"
+
+# Default analytics storage location path
+# This is where Iceberg files are written on the filesystem (fallback)
+analytics_path = "/var/lib/postgresql/pgd-analytics"
+
+[database.analytics]
+# WarehousePG connection settings
+host = "whpg"
+port = 5432
+database = "demo"
+user = "gpadmin"
+password = "password"
+
+# Coordinator data directory
+master_data_directory = "/data/master/gpseg-1"
+
+[demo_data]
+# Synthetic data generation settings
+
+# Number of countries to generate
+num_countries = 20
+
+# Number of products to generate
+num_products = 100
+
+# Number of customers to generate
+num_customers = 1000
+
+# Number of sales transactions to generate
+num_sales = 10000
+
+# Date range for sales data
+start_date = "2024-01-01"
+end_date = "2026-01-29"
+
+# Random seed for reproducible data generation
+random_seed = 42
