@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 rockylinux/rockylinux:8
+FROM rockylinux/rockylinux:8
 
 ENV container=docker
 
