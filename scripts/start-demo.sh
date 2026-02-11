@@ -213,7 +213,8 @@ start_analytics_db() {
     docker-compose up -d --build
 
     # Wait for service (longer timeout for WHPG initialization)
-    wait_for_service "whpg" 300 || exit 1
+    # Container is named "cdw" (coordinator data warehouse) in docker-compose.yml
+    wait_for_service "cdw" 300 || exit 1
 
     log_info "✓ Analytics database started successfully"
 }
