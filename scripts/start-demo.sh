@@ -184,6 +184,12 @@ start_transactional_db() {
 start_spark() {
     log_step "Starting Spark Cluster"
 
+    # Spark component is WIP - skip for now
+    if [ ! -d "$SPARK_DIR" ]; then
+        log_warn "Spark directory not found - Spark component is WIP, skipping..."
+        return 0
+    fi
+
     cd "$SPARK_DIR"
 
     log_info "Building and starting Spark cluster..."
@@ -207,7 +213,8 @@ start_analytics_db() {
     docker-compose up -d --build
 
     # Wait for service (longer timeout for WHPG initialization)
-    wait_for_service "whpg" 300 || exit 1
+    # Container is named "cdw" (coordinator data warehouse) in docker-compose.yml
+    wait_for_service "cdw" 300 || exit 1
 
     log_info "✓ Analytics database started successfully"
 }
@@ -219,7 +226,7 @@ show_status() {
     echo -e "${CYAN}Component Status:${NC}"
     docker-compose -f "$CATALOG_DIR/docker-compose.yml" ps
     docker-compose -f "$TRANSACTIONAL_DB_DIR/docker-compose.yml" ps
-    docker-compose -f "$SPARK_DIR/docker-compose.yml" ps
+    [ -d "$SPARK_DIR" ] && docker-compose -f "$SPARK_DIR/docker-compose.yml" ps
     docker-compose -f "$ANALYTICS_DB_DIR/docker-compose.yml" ps
 
     echo -e "\n${CYAN}Service Endpoints:${NC}"
@@ -227,9 +234,11 @@ show_status() {
     echo -e "  ${GREEN}MinIO API:${NC}           http://localhost:9000"
     echo -e "  ${GREEN}Lakekeeper API:${NC}      http://localhost:8181"
     echo -e "  ${GREEN}PGD Database:${NC}        localhost:7432 (postgres/secret)"
-    echo -e "  ${GREEN}Spark Master UI:${NC}     http://localhost:8080"
-    echo -e "  ${GREEN}Spark Connect:${NC}       sc://localhost:15002"
-    echo -e "  ${GREEN}Spark App UI:${NC}        http://localhost:4040"
+    if [ -d "$SPARK_DIR" ]; then
+        echo -e "  ${GREEN}Spark Master UI:${NC}     http://localhost:8080"
+        echo -e "  ${GREEN}Spark Connect:${NC}       sc://localhost:15002"
+        echo -e "  ${GREEN}Spark App UI:${NC}        http://localhost:4040"
+    fi
     echo -e "  ${GREEN}WarehousePG Database:${NC} localhost:5432 (gpadmin/password)"
 
     echo -e "\n${CYAN}Next Steps:${NC}"
@@ -246,7 +255,7 @@ stop_all() {
     cd "$ANALYTICS_DB_DIR" && docker-compose down
 
     log_info "Stopping Spark cluster..."
-    cd "$SPARK_DIR" && docker-compose down
+    [ -d "$SPARK_DIR" ] && cd "$SPARK_DIR" && docker-compose down || log_warn "Spark directory not found, skipping..."
 
     log_info "Stopping transactional database..."
     cd "$TRANSACTIONAL_DB_DIR" && docker-compose down
