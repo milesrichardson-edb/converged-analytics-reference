@@ -1,0 +1,159 @@
+# Minimal Docker Compose for PGD + Spark GPU demo
+#
+# This file can be run on a clean machine (Brev or otherwise) to start a
+# PostgreSQL+PGAA cluster alongside a Spark/RAPIDS GPU cluster.  It omits all
+# of the dbt7/MinIO/Lakekeeper machinery that pgsprint uses for benchmarking;
+# the goal is simply to let someone exercise the GPU path by hand.
+#
+# Usage:
+#   export EDB_SUBSCRIPTION_TOKEN=<your_token>      # required for PGD image
+#   export RAPIDS_SOURCE=local                      # or "maven"/"s3"
+#
+#   When RAPIDS_SOURCE=local the build needs to COPY the jar into the
+#   `docker/spark-rapids` build context. Docker cannot access files outside
+#   that directory, so put the file there first, e.g.:  
+#
+#       cp /path/to/rapids-4-spark_2.13-26.02.0-20260129.075931-54.jar \
+#           docker/spark-rapids/
+#       export RAPIDS_JAR=rapids-4-spark_2.13-26.02.0-20260129.075931-54.jar
+#
+#   You can also use maven or s3 sources instead:
+#       export RAPIDS_SOURCE=maven
+#       export RAPIDS_VERSION=25.06.0
+#   or
+#       export RAPIDS_SOURCE=s3
+#       export RAPIDS_S3_URL=s3://mybucket/rapids.jar
+#
+#   Finally, start the stack with
+#       docker compose -f docker-compose.demo.yml up -d --build
+#   (omit -d only for one-shot debug; otherwise the containers will exit when
+#    you cancel the command and `docker ps` will show nothing)
+#
+# After the stack is up you can connect to PGD from the host and run the same
+# simple demonstration queries shown in the README/NOTES.
+
+
+x-vars:
+  spark_rapids_image: &spark_rapids_image "pgsprint-spark-rapids:3.5.6-scala2.13"
+  gpu_count: &gpu_count "${GPU_COUNT:-1}"
+
+networks:
+  converged-analytics-network:
+    external: true
+    name: converged-analytics-network
+
+volumes:
+  spark-ivy:
+
+services:
+  spark-init-gpu:
+    build:
+      context: ./docker/spark-rapids
+      args:
+        RAPIDS_SOURCE: ${RAPIDS_SOURCE:-maven}
+        RAPIDS_VERSION: ${RAPIDS_VERSION:-25.02.0}
+        RAPIDS_JAR: ${RAPIDS_JAR:-}
+    image: *spark_rapids_image
+    container_name: spark-init-gpu
+    user: root
+    volumes:
+      - spark-ivy:/home/spark/.ivy2
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      # ensure the volume path exists, then fix ownership; ignore errors
+      mkdir -p /home/spark/.ivy2/cache
+      chmod -R 777 /home/spark/.ivy2
+      echo "Spark Ivy cache initialized with open permissions"
+    networks:
+      - converged-analytics-network 
+
+  spark-master-gpu:
+    image: *spark_rapids_image
+    container_name: spark-master-gpu
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    command: /opt/spark/sbin/start-master.sh
+    networks:
+      - converged-analytics-network
+
+  spark-worker-gpu:
+    image: *spark_rapids_image
+    container_name: spark-worker-gpu
+    runtime: nvidia
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      # Combined GPU and Ivy fixes here
+      SPARK_WORKER_OPTS: >-
+        -Dspark.worker.resource.gpu.discoveryScript=/opt/spark/examples/src/main/scripts/getGpusResources.sh
+        -Dspark.worker.resource.gpu.amount=1
+        -Divy.cache.dir=/tmp/.ivy2/cache
+        -Divy.home=/tmp/.ivy2
+    volumes:
+      - spark-ivy:/home/spark/.ivy2
+    networks:
+      - converged-analytics-network
+    depends_on:
+      spark-master-gpu:
+        condition: service_started
+      spark-init-gpu:
+        condition: service_completed_successfully
+    # Use '>' to ensure the command is parsed as a single line
+    command: >
+      /opt/spark/sbin/start-worker.sh 
+      spark://spark-master-gpu:7077 
+      --memory ${SPARK_WORKER_MEMORY:-8g} 
+      --cores ${SPARK_WORKER_CORES:-4}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              count: 1 
+
+  spark-connect-gpu:
+    image: *spark_rapids_image
+    container_name: spark-connect-gpu
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    volumes:
+      - spark-ivy:/home/spark/.ivy2
+    networks:
+      - converged-analytics-network 
+    depends_on:
+      spark-master-gpu:
+        condition: service_started
+      spark-init-gpu:
+        condition: service_completed_successfully
+      spark-worker-gpu:
+        condition: service_started
+    ports:
+      - "15002:15002"
+      - "4040:4040"
+    command: >
+      /opt/spark/sbin/start-connect-server.sh
+      --master spark://spark-master-gpu:7077
+      --packages "org.apache.spark:spark-connect_2.13:3.5.6,org.apache.iceberg:iceberg-spark-runtime-3.5_2.13:1.9.2,org.apache.iceberg:iceberg-aws-bundle:1.9.2,io.delta:delta-spark_2.13:3.3.1,org.apache.hadoop:hadoop-aws:3.3.4"
+      --conf "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,io.delta.sql.DeltaSparkSessionExtension"
+      --conf "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkSessionCatalog"
+      --conf "spark.plugins=com.nvidia.spark.SQLPlugin"
+      --conf "spark.driver.extraJavaOptions=-Divy.cache.dir=/tmp/.ivy2/cache -Divy.home=/tmp/.ivy2"
+      --conf "spark.rapids.sql.enabled=true"
+      --conf "spark.executor.resource.gpu.amount=1"
+      --conf "spark.executor.resource.gpu.discoveryScript=/opt/spark/examples/src/main/scripts/getGpusResources.sh"
+      --conf "spark.task.resource.gpu.amount=${GPU_TASK_AMOUNT:-0.125}"
+      --conf "spark.sql.files.maxPartitionBytes=${GPU_MAX_PARTITION_BYTES:-512m}"
+      --conf "spark.rapids.memory.gpu.allocFraction=${GPU_ALLOC_FRACTION:-1.0}"
+      --conf "spark.rapids.memory.gpu.maxAllocFraction=${GPU_MAX_ALLOC_FRACTION:-1.0}"
+      --conf "spark.rapids.memory.gpu.minAllocFraction=${GPU_MIN_ALLOC_FRACTION:-0.25}"
+      --conf "spark.rapids.memory.pinnedPool.size=${GPU_PINNED_POOL_SIZE:-4g}"
+      --conf "spark.rapids.filecache.enabled=${GPU_FILE_CACHE_ENABLED:-false}"
+      --conf "spark.driver.memory=${SPARK_DRIVER_MEMORY:-2g}"
+      --conf "spark.executor.cores=${SPARK_EXECUTOR_CORES:-2}"
+      --conf "spark.executor.instances=${SPARK_EXECUTOR_INSTANCES:-1}"
+      --conf "spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-4g}"
+      --conf "spark.sql.adaptive.enabled=true"
+      --conf "spark.sql.adaptive.coalescePartitions.enabled=true"
+      --conf "spark.sql.ansi.enabled=true"
+      --conf "spark.sql.ansi.doubleQuotedIdentifiers=true"
+      ${SPARK_EXTRA_CONF:-}

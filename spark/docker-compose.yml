@@ -1,0 +1,78 @@
+x-vars:
+  spark_image: &spark_image "spark:3.5.6-java17"
+  # Scaled down for local Docker desktop limits
+  worker_memory: &worker_memory "${SPARK_WORKER_MEMORY:-8g}"
+  worker_cores: &worker_cores "${SPARK_WORKER_CORES:-4}"
+
+x-spark-common: &spark-common
+  image: *spark_image
+  environment: &common-environment
+    SPARK_NO_DAEMONIZE: "true"
+    SPARK_LOCAL_DIRS: /data/spark
+    SPARK_WORK_DIR: /data/spark
+  volumes:
+    - ./data/spark-app:/data/spark
+    - ./data/spark-app/:/data/spark-app
+x-spark-worker: &spark-worker
+  <<: *spark-common
+  depends_on:
+    - spark-master
+  command:
+    - /opt/spark/sbin/start-worker.sh
+    - spark://spark-master:7077
+    - --memory
+    - *worker_memory
+    - --cores
+    - *worker_cores
+  environment: &worker-environment
+    <<: *common-environment
+    SPARK_WORKER_OPTS: >-
+      -Dspark.executor.extraJavaOptions="-Djava.io.tmpdir=/data/spark"
+
+services:
+  spark-master:
+    image: *spark_image
+    hostname: spark-master
+    container_name: spark-master
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    command: /opt/spark/sbin/start-master.sh
+    ports: ["8080:8080", "7077:7077"]
+    networks:
+      - converged-analytics-network
+  
+  spark-connect:
+    <<: *spark-common
+    depends_on: ["spark-master"]
+    container_name: spark-connect
+    ports: ["4040:4040", "15002:15002"]
+    networks:
+      - converged-analytics-network
+    command: >
+      /opt/spark/sbin/start-connect-server.sh --master spark://spark-master:7077
+      --packages "org.apache.spark:spark-connect_2.12:3.5.6,io.delta:delta-spark_2.12:3.3.1,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.apache.iceberg:iceberg-aws-bundle:1.9.2,org.apache.hadoop:hadoop-aws:3.3.4"
+      --conf "spark.driver.extraJavaOptions=-Divy.cache.dir=/data/spark -Divy.home=/data/spark -Djava.io.tmpdir=/data/spark"
+      --conf "spark.executor.extraJavaOptions=-Djava.io.tmpdir=/data/spark"
+      --conf "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+      --conf "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkSessionCatalog"
+      --conf "spark.driver.memory=2g"
+      --conf "spark.executor.instances=1"  # <--- REDUCED FROM 2 TO 1
+      --conf "spark.executor.cores=2"
+      --conf "spark.executor.memory=2g"
+      --conf "spark.scheduler.minRegisteredResourcesRatio=1.0"
+      --conf "spark.locality.wait=0s"
+      --conf "spark.sql.files.maxPartitionBytes=128mb" 
+
+  spark-worker-0:
+    <<: *spark-worker
+    hostname: spark-worker-0
+    container_name: spark-worker-0
+    networks:
+      - converged-analytics-network
+    environment:
+      <<: *worker-environment
+
+networks:
+  converged-analytics-network:
+    external: true
+    name: converged-analytics-network
