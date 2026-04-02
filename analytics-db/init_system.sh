@@ -1,27 +1,13 @@
 #!/bin/bash
 ## ======================================================================
-## Container initialization script
+## Container initialization script (runs as a systemd oneshot service)
 ## ======================================================================
-
-# ----------------------------------------------------------------------
-# Start SSH daemon and setup for SSH access
-# ----------------------------------------------------------------------
-# The SSH daemon is started to allow remote access to the container via
-# SSH. This is useful for development and debugging purposes. If the SSH
-# daemon fails to start, the script exits with an error.
-# ----------------------------------------------------------------------
-if ! sudo /usr/sbin/sshd; then
-    echo "Failed to start SSH daemon" >&2
-    exit 1
-fi
+set -e
 
 sudo ln -sf /usr/bin/python2.7 /usr/bin/python
 
 # ----------------------------------------------------------------------
 # Remove /run/nologin to allow logins
-# ----------------------------------------------------------------------
-# The /run/nologin file, if present, prevents users from logging into
-# the system. This file is removed to ensure that users can log in via SSH.
 # ----------------------------------------------------------------------
 sudo rm -rf /run/nologin
 
@@ -41,10 +27,6 @@ fi
 # ----------------------------------------------------------------------
 # Configure passwordless SSH access for 'gpadmin' user
 # ----------------------------------------------------------------------
-# The script sets up SSH key-based authentication for the 'gpadmin' user,
-# allowing passwordless SSH access. It generates a new SSH key pair if one
-# does not already exist, and configures the necessary permissions.
-# ----------------------------------------------------------------------
 mkdir -p /home/gpadmin/.ssh
 chmod 700 /home/gpadmin/.ssh
 
@@ -62,20 +44,24 @@ ssh-keyscan -t rsa cdw > /home/gpadmin/.ssh/known_hosts 2>/dev/null
 source /usr/local/greenplum-db/greenplum_path.sh
 export MASTER_DATA_DIRECTORY=/data/master/gpseg-1
 
-#Initialize multi node WarehousePG cluster
+# Initialize multi node WarehousePG cluster
+sshpass -p "changeme@123" ssh-copy-id -o StrictHostKeyChecking=no sdw1
+sshpass -p "changeme@123" ssh-copy-id -o StrictHostKeyChecking=no sdw2
+gpinitsystem -a \
+             -c /tmp/gpinitsystem_config \
+             -h /tmp/hostfile_gpinitsystem \
+             --max_connections=100
 
-    sshpass -p "changeme@123" ssh-copy-id -o StrictHostKeyChecking=no sdw1
-    sshpass -p "changeme@123" ssh-copy-id -o StrictHostKeyChecking=no sdw2
-    gpinitsystem -a \
-                 -c /tmp/gpinitsystem_config \
-                 -h /tmp/hostfile_gpinitsystem \
-                 --max_connections=100
-
-    printf "sdw1\nsdw2\n" >> /tmp/gpdb-hosts
+printf "sdw1\nsdw2\n" >> /tmp/gpdb-hosts
 
 if [ $HOSTNAME == "cdw" ]; then
      ## Allow any host access the WarehousePG Cluster
      echo 'host all all 0.0.0.0/0 trust' >> /data/master/gpseg-1/pg_hba.conf
+     # for host in sdw1 sdw2; do
+     #   ssh "$host" 'for d in /data1/primary/gpseg* /data2/primary/gpseg* /data1/mirror/gpseg* /data2/mirror/gpseg*; do
+     #     [ -f "$d/pg_hba.conf" ] && echo "host all all 0.0.0.0/0 trust" >> "$d/pg_hba.conf"
+     #   done'
+     # done
      gpstop -u
 
      psql -d template1 \
@@ -84,7 +70,7 @@ if [ $HOSTNAME == "cdw" ]; then
      cat <<-'EOF'
 
 ======================================================================
-Demo: WarehousePG with PGAA Database Cluster details
+Sandbox: WarehousePG Database Cluster details
 ======================================================================
 
 EOF
@@ -98,34 +84,17 @@ EOF
      psql -P pager=off -d template1 -c "SELECT * FROM gp_segment_configuration ORDER BY dbid"
      psql -P pager=off -d template1 -c "SHOW optimizer"
 
-     echo ""
-     echo "Configuring PGAA and PGFS..."
-
-     # Step 1: Add PGAA and PGFS to shared_preload_libraries and restart
-     gpconfig -c shared_preload_libraries -v 'pgaa,pgfs'
-     gpstop -a -M fast -r
-
-     # Step 2: Enable Seafowl (Datafusion) engine and restart
-     gpconfig -c pgaa.autostart_seafowl -v on
-     gpstop -a -M fast -r
-
-     # Step 3: Create extensions
-     psql -d demo -c 'CREATE EXTENSION IF NOT EXISTS pgaa CASCADE'
-     psql -d demo -c 'CREATE EXTENSION IF NOT EXISTS pgfs CASCADE'
-
-     # Verify PGAA setup
-     echo ""
-     echo "PGAA Version:"
-     psql -P pager=off -d demo -c 'SELECT pgaa.pgaa_version()'
-
-     echo ""
-     echo "Installed Extensions:"
-     psql -P pager=off -d demo -c '\dx'
-
      sudo touch /gpinitsystem_complete
+
+     # Start Seafowl via systemd (same as production RHEL hosts)
+     if [ -x /usr/local/greenplum-db/bin/seafowl ] && [ -f /etc/edb/pgaa/seafowl.toml ]; then
+       echo "Starting Seafowl service..."
+       sudo systemctl start seafowl.service
+       sudo systemctl status seafowl.service || true
+     fi
 fi
 
-echo '
+echo "
 ===========================
 =  DEPLOYMENT SUCCESSFUL  =
 ===========================
@@ -135,17 +104,8 @@ echo '
  __          __            _                          _____   _____
  \ \        / /           | |                        |  __ \ / ____|
   \ \  /\  / /_ _ _ __ ___| |__   ___  _   _ ___  ___| |__) | |  __
-   \ \/  \/ / _` | '__/ _ \ '_ \ / _ \| | | / __|/ _ \  ___/| | |_ |
+   \ \/  \/ / _\` | '__/ _ \ '_ \ / _ \| | | / __|/ _ \  ___/| | |_ |
     \  /\  / (_| | | |  __/ | | | (_) | |_| \__ \  __/ |    | |__| |
      \/  \/ \__,_|_|  \___|_| |_|\___/ \__,_|___/\___|_|     \_____|
 
-======================================================================'
-
-# ----------------------------------------------------------------------
-# Start an interactive bash shell
-# ----------------------------------------------------------------------
-# Finally, the script starts an interactive bash shell to keep the
-# container running and allow the user to interact with the environment.
-# ----------------------------------------------------------------------
-/bin/bash
-
+======================================================================"

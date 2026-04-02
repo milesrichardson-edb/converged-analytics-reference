@@ -25,6 +25,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import psycopg2
 import psycopg2.extras
@@ -114,7 +115,43 @@ def get_lakekeeper_warehouse(catalog_url, warehouse_name):
         return warehouse_id
 
     except requests.exceptions.RequestException as e:
+        # If name resolution failed (e.g. 'lakekeeper' hostname only resolvable from Docker),
+        # try replacing the hostname with 'localhost' and retrying.
         console.print(f"[red]Error querying Lakekeeper: {e}[/red]")
+
+        try:
+            parsed = urlparse(catalog_url)
+            if parsed.hostname and parsed.hostname not in ("localhost", "127.0.0.1"):
+                # Build a fallback URL using localhost but keep the same port/path
+                fallback_netloc = parsed.netloc.replace(parsed.hostname, "localhost")
+                fallback_parsed = parsed._replace(netloc=fallback_netloc)
+                fallback_url = urlunparse(fallback_parsed)
+                fallback_base = fallback_url.replace("/catalog", "").rstrip("/")
+
+                console.print(f"[yellow]Retrying Lakekeeper request using localhost: {fallback_base}[/yellow]")
+                response = requests.get(f"{fallback_base}/management/v1/warehouse", timeout=5)
+                response.raise_for_status()
+                warehouses = response.json().get("warehouses", [])
+
+                if not warehouses:
+                    console.print("[red]Error: No warehouses found in Lakekeeper (localhost retry)[/red]")
+                    return None
+
+                matching_warehouses = [w for w in warehouses if w.get("name") == warehouse_name]
+                if not matching_warehouses:
+                    console.print(f"[red]Error: No warehouse found with name '{warehouse_name}' (localhost retry)[/red]")
+                    console.print(
+                        f"[yellow]Available warehouses: {', '.join([w.get('name', 'unknown') for w in warehouses])}[/yellow]"
+                    )
+                    return None
+
+                warehouse = matching_warehouses[0]
+                warehouse_id = warehouse.get("id")
+                console.print(f"[green]✓ Found warehouse: {warehouse_name} ({warehouse_id})[/green]")
+                return warehouse_id
+        except Exception:
+            console.print("[red]Retry using localhost also failed[/red]")
+
         return None
 
 
@@ -173,10 +210,12 @@ def setup_local_catalog_tables(conn, config):
 
         # Define tables to create
         tables = [
-            "countries",
-            "products",
+            "stores",
             "customers",
-            "sales",
+            "campaigns",
+            "items",
+            "live_orders",
+            "historical_sales"
         ]
 
         for table_name in tables:
@@ -277,6 +316,7 @@ def setup_delta_tables(conn):
 
     conn.commit()
     console.print("[green]✓ Delta tables setup complete[/green]")
+
 
 
 def main():

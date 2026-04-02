@@ -22,7 +22,7 @@ PORT_BASE=6000
 #### physical host (if multiple addresses for a host are listed in
 #### the hostfile, the number of segments will be spread evenly across
 #### the specified interface addresses).
-declare -a DATA_DIRECTORY=(/data1/primary /data2/primary)
+declare -a DATA_DIRECTORY=(/data1/primary /data1/primary /data1/primary /data2/primary /data2/primary /data2/primary)
 
 #### OS-configured hostname or IP address of the master host.
 MASTER_HOSTNAME=cdw
@@ -55,7 +55,7 @@ MIRROR_PORT_BASE=7000
 #### will be created. The number of mirror locations must equal the
 #### number of primary locations as specified in the
 #### DATA_DIRECTORY parameter.
-declare -a MIRROR_DATA_DIRECTORY=(/data1/mirror /data2/mirror)
+declare -a MIRROR_DATA_DIRECTORY=(/data1/mirror /data1/mirror /data1/mirror /data2/mirror /data2/mirror /data2/mirror)
 
 
 ################################################
@@ -65,3 +65,6 @@ declare -a MIRROR_DATA_DIRECTORY=(/data1/mirror /data2/mirror)
 #### Create a database of this name after initialization.
 DATABASE_NAME=demo
 
+#### Specify the location of the host address file here instead of
+#### with the -h option of gpinitsystem.
+#MACHINE_LIST_FILE=/home/gpadmin/gpconfigs/hostfile_gpinitsystem
