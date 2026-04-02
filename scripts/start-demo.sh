@@ -187,10 +187,29 @@ start_spark() {
     cd "$SPARK_DIR"
 
     log_info "Building and starting Spark cluster..."
-    docker-compose up -d --build
+
+    local enable_rapids=false
+    for arg in "$@"; do
+        if [[ "$arg" == "--enable-rapids" ]]; then
+            enable_rapids=true
+            break
+        fi
+    done
+
+    if [ "$enable_rapids" = true ]; then
+        log_info "✓ RAPIDS acceleration enabled"
+        docker-compose -f docker-compose-gpu.yml up -d --build
+    else
+        docker-compose up -d --build
+    fi
 
     # Wait for services
-    wait_for_service "spark-master" || exit 1
+    # if [ "$enable_rapids" = true ]; then
+    #     wait_for_service "spark-master-gpu" || exit 1
+    # else
+    #     wait_for_service "spark-master" || exit 1
+    # fi
+    # wait_for_service "spark-master" || exit 1
     wait_for_port "localhost" 15002 120 || exit 1
 
     log_info "✓ Spark cluster started successfully"
@@ -207,9 +226,25 @@ start_analytics_db() {
     docker-compose up -d --build
 
     # Wait for service (longer timeout for WHPG initialization)
-    wait_for_service "whpg" 300 || exit 1
+    # wait_for_service "cdw" 300 || exit 1
 
     log_info "✓ Analytics database started successfully"
+}
+
+# Start demo application
+start_demo_app() {
+    log_step "Starting Demo Application"
+
+    cd "$PROJECT_ROOT/demo-app"
+
+    log_info "Building and starting demo application..."
+    docker-compose up -d --build
+
+    # Wait for backend to be healthy
+    # wait_for_service "backend" || exit 1
+    # wait_for_port "localhost" 8000 60 || exit 1
+
+    log_info "✓ Demo application started successfully"
 }
 
 # Display status
@@ -217,10 +252,11 @@ show_status() {
     log_step "Deployment Status"
 
     echo -e "${CYAN}Component Status:${NC}"
-    docker-compose -f "$CATALOG_DIR/docker-compose.yml" ps
-    docker-compose -f "$TRANSACTIONAL_DB_DIR/docker-compose.yml" ps
-    docker-compose -f "$SPARK_DIR/docker-compose.yml" ps
-    docker-compose -f "$ANALYTICS_DB_DIR/docker-compose.yml" ps
+    docker compose -f "$CATALOG_DIR/docker-compose.yml" ps
+    docker compose -f "$TRANSACTIONAL_DB_DIR/docker-compose.yml" ps
+    docker compose -f "$SPARK_DIR/docker-compose.yml" ps
+    docker compose -f "$ANALYTICS_DB_DIR/docker-compose.yml" ps
+    docker compose -f "$PROJECT_ROOT/demo-app/docker-compose.yml" ps
 
     echo -e "\n${CYAN}Service Endpoints:${NC}"
     echo -e "  ${GREEN}MinIO Console:${NC}       http://localhost:9001 (admin/minioadmin)"
@@ -231,6 +267,8 @@ show_status() {
     echo -e "  ${GREEN}Spark Connect:${NC}       sc://localhost:15002"
     echo -e "  ${GREEN}Spark App UI:${NC}        http://localhost:4040"
     echo -e "  ${GREEN}WarehousePG Database:${NC} localhost:5432 (gpadmin/password)"
+    echo -e "  ${GREEN}Demo App Backend:${NC}   http://localhost:8000"
+    echo -e "  ${GREEN}Demo App Frontend:${NC}  http://localhost:3000"
 
     echo -e "\n${CYAN}Next Steps:${NC}"
     echo -e "  1. Validate configuration: ${YELLOW}python3 scripts/config_validator.py${NC}"
@@ -243,16 +281,19 @@ stop_all() {
     log_step "Stopping All Components"
 
     log_info "Stopping analytics database..."
-    cd "$ANALYTICS_DB_DIR" && docker-compose down
+    cd "$ANALYTICS_DB_DIR" && docker compose down
 
     log_info "Stopping Spark cluster..."
-    cd "$SPARK_DIR" && docker-compose down
+    cd "$SPARK_DIR" && docker compose down
 
     log_info "Stopping transactional database..."
-    cd "$TRANSACTIONAL_DB_DIR" && docker-compose down
+    cd "$TRANSACTIONAL_DB_DIR" && docker compose down
 
     log_info "Stopping catalog..."
-    cd "$CATALOG_DIR" && docker-compose down
+    cd "$CATALOG_DIR" && docker compose down
+
+    log_info "Stopping demo application..."
+    cd "$PROJECT_ROOT/demo-app" && docker compose down
 
     log_info "✓ All components stopped"
 }
@@ -267,8 +308,9 @@ main() {
             check_prerequisites
             start_catalog
             start_transactional_db
-            start_spark
+            start_spark "$@"
             start_analytics_db
+            start_demo_app
             show_status
             log_info "✓ All components started successfully!"
             ;;

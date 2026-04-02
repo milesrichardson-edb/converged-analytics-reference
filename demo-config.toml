@@ -49,12 +49,12 @@ path_style_access = true
 
 [spark]
 # Enable RAPIDS Accelerator for Apache Spark (requires GPU)
-enable_rapids = false
+enable_rapids = true
 
 # Spark Connect endpoint URL (accessible from PGD and WHPG)
 # Default: local Spark Connect cluster
 # Note: When accessing from containers, use the service name or bridge IP
-connect_url = "sc://spark-master:15002"
+connect_url = "sc://spark-connect:15002"
 
 # Spark version
 version = "3.5.6"

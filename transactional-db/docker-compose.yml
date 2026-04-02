@@ -24,9 +24,9 @@ services:
       - pgd-analytics:/var/lib/postgresql/pgd-analytics
       # Remote Docker context: config file must be on remote host
       # Copy to remote: scp demo-config.toml $REMOTE_DOCKER_HOST:/home/ec2-user/converged-analytics-reference/
-      - /home/ec2-user/converged-analytics-reference/demo-config.toml:/config/demo-config.toml:ro
+      # - /home/ec2-user/converged-analytics-reference/demo-config.toml:/config/demo-config.toml:ro
       # Local Docker context: uncomment the line below and comment out the line above
-      # - ../demo-config.toml:/config/demo-config.toml:ro
+      - ../demo-config.toml:/config/demo-config.toml:ro
     ports:
       - "7432:5432"
       - "6432:6432"
